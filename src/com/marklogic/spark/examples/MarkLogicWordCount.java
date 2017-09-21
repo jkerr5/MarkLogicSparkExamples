@@ -97,8 +97,15 @@ public class MarkLogicWordCount {
             System.exit(0);
         }
 
-        //first you create the spark context within java
-        SparkConf conf = new SparkConf().setAppName("com.marklogic.spark.examples").setMaster("local");
+        // first you create the spark context within java
+        SparkConf conf = new SparkConf()
+          .setAppName("com.marklogic.spark.examples")
+          .setMaster("local")
+          // Spark uses Java serialization as the default serializer but the MarkLogic
+          // hadoop classes implement org.apache.hadoop.io.Writable but not java.io.Serializable
+          // so we need to use the Kryo serializer
+          .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer");
+
         JavaSparkContext context = new JavaSparkContext(conf);
 
         //Create configuration object and load the MarkLogic specific properties from the configuration file.
