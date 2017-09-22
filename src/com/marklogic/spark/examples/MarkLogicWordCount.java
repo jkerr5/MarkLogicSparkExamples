@@ -18,8 +18,15 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import scala.Tuple2;
 
+import com.esotericsoftware.kryo.io.Input;
+import com.esotericsoftware.kryo.io.Output;
+import com.esotericsoftware.kryo.Serializer;
+import com.esotericsoftware.kryo.Kryo;
+
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -91,6 +98,28 @@ public class MarkLogicWordCount {
                 }
             };
 
+    private static class MarkLogicNodeSerializer extends Serializer<MarkLogicNode> {
+        @Override
+        public void write(Kryo kryo, Output output, MarkLogicNode node) {
+          node.write(new DataOutputStream(output));
+        }
+
+        @Override
+        public MarkLogicNode read(Kryo kryo, Input input, Class<MarkLogicNode> aClass) {
+          MarkLogicNode node = new MarkLogicNode();
+          node.readFields(new DataInputStream(input));
+
+          return node;
+        }
+    }
+
+    private static class MarkLogicKryoRegistrator extends org.apache.spark.serializer.KryoRegistrator {
+      public void registerClasses(Kryo kryo) {
+        kryo.register(MarkLogicNode.class, new MarkLogicNodeSerializer());
+      }
+    }
+
+
     public static void main(String[] args) throws IOException {
         if (args.length < 2) {
             System.err.println("Please provide the configuration file full path and target hdfs location as arguments");
@@ -100,11 +129,13 @@ public class MarkLogicWordCount {
         // first you create the spark context within java
         SparkConf conf = new SparkConf()
           .setAppName("com.marklogic.spark.examples")
-          .setMaster("local")
+          .set("spark.cores.max", "4")
           // Spark uses Java serialization as the default serializer but the MarkLogic
           // hadoop classes implement org.apache.hadoop.io.Writable but not java.io.Serializable
           // so we need to use the Kryo serializer
-          .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer");
+          .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+          .set("spark.kryo.registrator", "com.marklogic.spark.examples.MarkLogicKryoRegistrator")
+          ;
 
         JavaSparkContext context = new JavaSparkContext(conf);
 
