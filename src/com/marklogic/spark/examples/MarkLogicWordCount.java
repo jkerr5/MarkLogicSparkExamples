@@ -36,7 +36,7 @@ public class MarkLogicWordCount {
     private static final PairFlatMapFunction<Tuple2<DocumentURI, MarkLogicNode>, String, String> ELEMENT_NAME_VALUE_PAIR_EXTRACTOR =
             new PairFlatMapFunction<Tuple2<DocumentURI,MarkLogicNode>, String, String>() {
                 @Override
-                public Iterable<Tuple2<String, String>> call(Tuple2<DocumentURI, MarkLogicNode> arg) throws Exception {
+                public Iterator<Tuple2<String, String>> call(Tuple2<DocumentURI, MarkLogicNode> arg) throws Exception {
                     DocumentURI key = arg._1();
                     MarkLogicNode value = arg._2();
                     ArrayList<Tuple2<String, String>> elementValuePairs = new ArrayList<Tuple2<String, String>>();
@@ -52,7 +52,7 @@ public class MarkLogicWordCount {
                     } else {
                         System.out.println("Error in FlatMapFunction key: " + key + ", value: " + value);
                     }
-                    return elementValuePairs;
+                    return elementValuePairs.iterator();
                 }
             };
 
