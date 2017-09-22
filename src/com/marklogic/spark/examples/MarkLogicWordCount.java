@@ -8,10 +8,12 @@ import com.marklogic.mapreduce.DocumentInputFormat;
 import com.marklogic.mapreduce.DocumentURI;
 import com.marklogic.mapreduce.MarkLogicNode;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.io.Writable;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.*;
+import org.apache.spark.serializer.KryoRegistrator;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -22,6 +24,7 @@ import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.esotericsoftware.kryo.Serializer;
 import com.esotericsoftware.kryo.Kryo;
+import com.esotericsoftware.kryo.KryoException;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -47,7 +50,9 @@ public class MarkLogicWordCount {
                         NodeList childNodes = docElement.getChildNodes();
                         for(int index=0; index < childNodes.getLength(); index++){
                             Node nodeItem = childNodes.item(index);
-                            elementValuePairs.add(new Tuple2<String, String>(nodeItem.getNodeName(), nodeItem.getTextContent()));
+			    if (nodeItem.getNodeType() == Node.ELEMENT_NODE) {
+				elementValuePairs.add(new Tuple2<String, String>(nodeItem.getNodeName(), nodeItem.getTextContent()));
+			    }
                         }
                     } else {
                         System.out.println("Error in FlatMapFunction key: " + key + ", value: " + value);
@@ -98,24 +103,40 @@ public class MarkLogicWordCount {
                 }
             };
 
-    private static class MarkLogicNodeSerializer extends Serializer<MarkLogicNode> {
+    public static class WritableSerializer extends Serializer<Writable> {
         @Override
-        public void write(Kryo kryo, Output output, MarkLogicNode node) {
-          node.write(new DataOutputStream(output));
+        public void write(Kryo kryo, Output output, Writable obj) {
+          try {
+	      obj.write(new DataOutputStream(output));
+	  } catch (IOException e) {
+	      throw new KryoException(e);
+	  }
         }
 
         @Override
-        public MarkLogicNode read(Kryo kryo, Input input, Class<MarkLogicNode> aClass) {
-          MarkLogicNode node = new MarkLogicNode();
-          node.readFields(new DataInputStream(input));
-
-          return node;
+        public Writable read(Kryo kryo, Input input, Class<Writable> aClass) {
+	  try {
+	      Writable obj = aClass.newInstance();
+	      obj.readFields(new DataInputStream(input));
+	      return obj;
+	  } catch (IllegalAccessException e) {
+	      throw new KryoException(e);
+	  } catch (InstantiationException e) {
+	      throw new KryoException(e);
+	  } catch (IOException e) {
+	      throw new KryoException(e);
+	  }          
         }
     }
 
-    private static class MarkLogicKryoRegistrator extends org.apache.spark.serializer.KryoRegistrator {
+    public static class MarkLogicKryoRegistrator implements KryoRegistrator {
       public void registerClasses(Kryo kryo) {
-        kryo.register(MarkLogicNode.class, new MarkLogicNodeSerializer());
+	// we could cover all Writable objects using this but we will just limit it to the MarkLogic classes
+	// we know need a custom serializer for now
+
+        Serializer serializer = new WritableSerializer();
+	kryo.register(MarkLogicNode.class, serializer);
+        kryo.register(DocumentURI.class, serializer);
       }
     }
 
@@ -129,13 +150,12 @@ public class MarkLogicWordCount {
         // first you create the spark context within java
         SparkConf conf = new SparkConf()
           .setAppName("com.marklogic.spark.examples")
-          .set("spark.cores.max", "4")
           // Spark uses Java serialization as the default serializer but the MarkLogic
           // hadoop classes implement org.apache.hadoop.io.Writable but not java.io.Serializable
           // so we need to use the Kryo serializer
           .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-          .set("spark.kryo.registrator", "com.marklogic.spark.examples.MarkLogicKryoRegistrator")
-          ;
+          .set("spark.kryo.registrator", MarkLogicKryoRegistrator.class.getName())
+        ;
 
         JavaSparkContext context = new JavaSparkContext(conf);
 
@@ -151,6 +171,10 @@ public class MarkLogicWordCount {
                 DocumentURI.class,          //Key Class
                 MarkLogicNode.class         //Value Class
         );
+
+	// Use a repartitioning stage to test out the serialization of MarkLogicNode objects
+	mlRDD = mlRDD.repartition(8);
+
         //extract XML elements as name value pairs where element content is value
         JavaPairRDD<String, String> elementNameValuePairs = mlRDD.flatMapToPair(ELEMENT_NAME_VALUE_PAIR_EXTRACTOR);
         //Group element values for the same element name
